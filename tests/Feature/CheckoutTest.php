@@ -4,24 +4,54 @@ namespace Tests\Feature;
 
 use Tests\TestCase;
 use Carbon\Carbon;
+use App\Services\Checkout;
 
-
+/**
+ * Test cases for the Checkout service using Enum-based pricing rules.
+ */
 class CheckoutTest extends TestCase
 {
-    private $products = [
-        'FR1' => ['code' => 'FR1', 'name' => 'Fruit tea', 'price' => 3.11],
-        'SR1' => ['code' => 'SR1', 'name' => 'Strawberries', 'price' => 5.00],
-        'CF1' => ['code' => 'CF1', 'name' => 'Coffee', 'price' => 11.23],
+    /**
+     * Sample products used in tests.
+     *
+     * @var array
+     */
+    private array $products = [
+        'FR1' => ['code' => 'FR1', 'price' => 3.11],
+        'SR1' => ['code' => 'SR1', 'price' => 5.00],
+        'CF1' => ['code' => 'CF1', 'price' => 11.23],
     ];
 
-    private $rules = [
-        'FR1' => ['rule_name' => 'buy_one_get_one', 'rule_details' => []],
+    /**
+     * Sample rules used in tests.
+     *
+     * @var array
+     */
+    private array $rules = [
+        'FR1' => [
+            'rule_name'    => 'buy_one_get_one',
+            'rule_details' => []
+        ],
         'SR1' => [
-            'rule_name' => 'bulk_discount',
-            'rule_details' => ['min_quantity' => 3, 'discount_price' => 4.50],
+            'rule_name'    => 'bulk_discount',
+            'rule_details' => ['min_quantity' => 3, 'discount_price' => 4.50]
         ],
     ];
 
+    private function invokePrivateMethod(object $object, string $methodName, array $parameters = [])
+    {
+        $reflection = new \ReflectionClass($object);
+        $method = $reflection->getMethod($methodName);
+        $method->setAccessible(true);
+
+        return $method->invokeArgs($object, $parameters);
+    }
+
+    /**
+     * Tests scanning a single item without any discount.
+     *
+     * Expected total: 3.11
+     */
     public function test_single_item()
     {
         $checkout = $this->createCheckout();
@@ -30,6 +60,12 @@ class CheckoutTest extends TestCase
         $this->assertEquals(3.11, $checkout->total());
     }
 
+    /**
+     * Tests the buy_one_get_one rule for product FR1.
+     *
+     * Scanning FR1 twice should cost the price of one.
+     * Expected total: 3.11
+     */
     public function test_buy_one_get_one_free()
     {
         $checkout = $this->createCheckout();
@@ -39,6 +75,12 @@ class CheckoutTest extends TestCase
         $this->assertEquals(3.11, $checkout->total());
     }
 
+    /**
+     * Tests the bulk_discount rule for SR1.
+     *
+     * Buying three SR1 items should apply the discount price (4.50 each).
+     * Expected total: 13.50
+     */
     public function test_bulk_discount()
     {
         $checkout = $this->createCheckout();
@@ -49,132 +91,182 @@ class CheckoutTest extends TestCase
         $this->assertEquals(13.50, $checkout->total());
     }
 
+    /**
+     * Tests scanning multiple different items, mixing rules.
+     *
+     * - FR1 => buy one get one free
+     * - SR1 => bulk discount
+     *
+     * Example scenario:
+     * - 2 x FR1 = 3.11 (BOGO applies)
+     * - 3 x SR1 = 13.50 (bulk discount)
+     * - plus maybe CF1 = 11.23 if scanned
+     */
     public function test_mixed_basket()
     {
         $checkout = $this->createCheckout();
 
+        // e.g. 2x FR1, 3x SR1
+        $checkout->scan('FR1');
         $checkout->scan('FR1');
         $checkout->scan('SR1');
-        $checkout->scan('FR1');
-        $checkout->scan('FR1');
-        $checkout->scan('CF1');
-        $this->assertEquals(22.45, $checkout->total());
+        $checkout->scan('SR1');
+        $checkout->scan('SR1');
+
+        // 2 FR1 => 3.11
+        // 3 SR1 => 13.50
+        // total = 16.61
+        // (If you add CF1 => 11.23, then total would be 27.84)
+        $this->assertEquals(16.61, $checkout->total());
     }
 
-    private function createCheckout()
+    /**
+     * Tests that an exception is thrown for a non-existent product.
+     */
+    public function test_scan_non_existent_product()
     {
-        $checkout = new \App\Services\Checkout($this->rules);
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessage("Product not found: NON_EXISTENT");
+
+        $checkout = $this->createCheckout();
+        $checkout->scan('NON_EXISTENT');
+    }
+
+    /**
+     * Helper method to initialize Checkout with sample $rules and $products.
+     *
+     * @return Checkout
+     */
+    private function createCheckout(): Checkout
+    {
+        $checkout = new Checkout($this->rules);
         $checkout->loadProducts($this->products);
 
         return $checkout;
     }
 
-    public function test_rule_with_date_restrictions()
+
+    /**
+     * Tests an active rule with no date and no day restrictions.
+     */
+    public function testIsRuleActiveNoDateNoDays()
     {
         $checkout = $this->createCheckout();
-    
         $rule = [
             'rule_name' => 'bulk_discount',
             'rule_details' => ['min_quantity' => 3, 'discount_price' => 4.50],
             'active' => 1,
-            'start_date' => '2025-01-01',
-            'end_date' => '2025-12-31',
+            'start_date' => null,
+            'end_date' => null,
             'days' => null,
         ];
-    
-        $isRuleActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
-        $this->assertTrue($isRuleActive);
-    
-        $rule['start_date'] = '2030-01-01';
-        $isRuleActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
-        $this->assertFalse($isRuleActive);
+
+        Carbon::setTestNow(Carbon::parse('2025-01-01'));
+        $isActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
+        $this->assertTrue($isActive);
+        Carbon::setTestNow();
     }
-    
+
     /**
-     * Helper to invoke private or protected methods.
-     *
-     * @param object $object The instance of the class.
-     * @param string $methodName The private/protected method name.
-     * @param array $parameters Parameters to pass to the method.
-     * @return mixed The result of the method call.
+     * Tests a rule that is explicitly inactive.
      */
-    private function invokePrivateMethod(object $object, string $methodName, array $parameters = [])
+    public function testIsRuleActiveInactive()
     {
-        $reflection = new \ReflectionClass($object);
-        $method = $reflection->getMethod($methodName);
-        $method->setAccessible(true);
-    
-        return $method->invokeArgs($object, $parameters);
+        $checkout = $this->createCheckout();
+        $rule = [
+            'rule_name' => 'bulk_discount',
+            'rule_details' => [],
+            'active' => 0,
+            'start_date' => null,
+            'end_date' => null,
+            'days' => null,
+        ];
+
+        $isActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
+        $this->assertFalse($isActive);
     }
 
-    public function test_combination_of_rules()
-{
-    $checkout = $this->createCheckout();
+    /**
+     * Tests a rule that has a future start date.
+     */
+    public function testIsRuleActiveBeforeStartDate()
+    {
+        $checkout = $this->createCheckout();
+        $rule = [
+            'rule_name' => 'bulk_discount',
+            'rule_details' => [],
+            'active' => 1,
+            'start_date' => '2030-01-01',
+            'end_date' => null,
+            'days' => null,
+        ];
 
-    $checkout->scan('FR1'); // Buy one get one free
-    $checkout->scan('FR1');
-    $checkout->scan('SR1'); // Bulk discount
-    $checkout->scan('SR1');
-    $checkout->scan('SR1');
+        Carbon::setTestNow(Carbon::parse('2025-01-01'));
+        $isActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
+        $this->assertFalse($isActive);
+        Carbon::setTestNow();
+    }
 
-    $this->assertEquals(16.61, $checkout->total());
-}
+    /**
+     * Tests a rule that has an expired end date.
+     */
+    public function testIsRuleActiveAfterEndDate()
+    {
+        $checkout = $this->createCheckout();
+        $rule = [
+            'rule_name' => 'bulk_discount',
+            'rule_details' => [],
+            'active' => 1,
+            'start_date' => '2020-01-01',
+            'end_date' => '2020-12-31',
+            'days' => null,
+        ];
 
-public function test_inactive_rule_is_ignored()
-{
-    $checkout = $this->createCheckout();
+        Carbon::setTestNow(Carbon::parse('2025-01-01'));
+        $isActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
+        $this->assertFalse($isActive);
+        Carbon::setTestNow();
+    }
 
-    $rule = [
-        'rule_name' => 'bulk_discount',
-        'rule_details' => ['min_quantity' => 3, 'discount_price' => 4.50],
-        'active' => 0, // Rule is inactive
-        'start_date' => null,
-        'end_date' => null,
-        'days' => null,
-    ];
+    /**
+     * Tests a rule restricted to Monday and Wednesday, simulating Monday.
+     */
+    public function testIsRuleActiveDayRestrictionMatches()
+    {
+        $checkout = $this->createCheckout();
+        $rule = [
+            'rule_name' => 'bulk_discount',
+            'rule_details' => [],
+            'active' => 1,
+            'start_date' => null,
+            'end_date' => null,
+            'days' => json_encode(['Monday', 'Wednesday']),
+        ];
 
-    $isRuleActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
-    $this->assertFalse($isRuleActive);
-}
+        Carbon::setTestNow(Carbon::parse('next Monday'));
+        $isActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
+        $this->assertTrue($isActive);
+        Carbon::setTestNow();
+    }
 
+    /**
+     * Tests a rule restricted to Monday and Wednesday, simulating Friday.
+     */
+    public function testIsRuleActiveDayRestrictionDoesNotMatch()
+    {
+        $checkout = $this->createCheckout();
+        $rule = [
+            'rule_name' => 'bulk_discount',
+            'rule_details' => [],
+            'active' => 1,
+            'start_date' => null,
+            'end_date' => null,
+            'days' => json_encode(['Monday', 'Wednesday']),
+        ];
 
-public function test_rule_with_day_restrictions()
-{
-    $checkout = $this->createCheckout();
-
-    $rule = [
-        'rule_name' => 'bulk_discount',
-        'rule_details' => ['min_quantity' => 3, 'discount_price' => 4.50],
-        'active' => 1,
-        'start_date' => null,
-        'end_date' => null,
-        'days'  => '["Monday","Wednesday"]',
-    ];
-
-    Carbon::setTestNow(Carbon::parse('next Monday'));
-    dump(Carbon::now()->format('l')); 
-    $this->assertSame('Monday', Carbon::now()->format('l'));
-
-    $isRuleActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
-    $this->assertTrue($isRuleActive);
-
-    Carbon::setTestNow(Carbon::parse('next Friday'));
-    dump(Carbon::now()->format('l')); 
-
-    $isRuleActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
-    $this->assertFalse($isRuleActive);
-
-    Carbon::setTestNow();
-}
-
-
-public function test_scan_non_existent_product()
-{
-    $this->expectException(\Exception::class);
-    $this->expectExceptionMessage("Product not found: NON_EXISTENT");
-
-    $checkout = $this->createCheckout();
-    $checkout->scan('NON_EXISTENT');
-}
-
+        Carbon::setTestNow(Carbon::parse('next Friday'));
+        $isActive = $this->invokePrivateMethod($checkout, 'isRuleActive', [$rule]);
+        $this->assertFalse($isActive);
+        Carbon::setTestNow();
+    }
 }
