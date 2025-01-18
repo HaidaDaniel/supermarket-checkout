@@ -2,58 +2,57 @@
 
 namespace App\Services;
 
-use Carbon\Carbon;
 use App\Enums\PricingRuleType;
 
 /**
- * The Checkout class manages the shopping cart and applies pricing rules using Enum.
+ * Manages the shopping cart and applies pricing rules using Enum.
  */
 class Checkout
 {
     /**
-     * @var array Products available for purchase.
+     * @var array<string,array<string,mixed>>
      */
     private array $products = [];
 
     /**
-     * @var array Pricing rules for the products.
+     * @var array<string,array<string,mixed>>
      */
     private array $rules = [];
 
     /**
-     * @var array The shopping cart containing scanned product codes.
+     * @var string[]
      */
     private array $cart = [];
 
     /**
-     * Constructor for the Checkout class.
+     * Initializes the Checkout with an optional set of rules.
      *
-     * @param array $pricing_rules The pricing rules to be applied.
+     * @param array<string,array<string,mixed>> $pricingRules
      */
-    public function __construct(array $pricing_rules)
+    public function __construct(array $pricingRules = [])
     {
-        $this->rules = $pricing_rules;
+        $this->rules = $pricingRules;
     }
 
     /**
-     * Adds a product to the shopping cart.
+     * Adds a product to the cart by its code.
      *
-     * @param string $productCode The product code to be added.
-     * @throws \Exception If the product code is not found in the product list.
-     * @return void
+     * @param string $productCode
+     * @throws \Exception
      */
     public function scan(string $productCode): void
     {
         if (!isset($this->products[$productCode])) {
             throw new \Exception("Product not found: $productCode");
         }
+
         $this->cart[] = $productCode;
     }
 
     /**
-     * Calculates the total cost of the shopping cart.
+     * Calculates the total cost of items in the cart.
      *
-     * @return float The total price after applying all applicable pricing rules.
+     * @return float
      */
     public function total(): float
     {
@@ -62,7 +61,7 @@ class Checkout
 
         foreach ($counts as $productCode => $quantity) {
             $price = $this->products[$productCode]['price'];
-            $rule = $this->rules[$productCode] ?? null;
+            $rule  = $this->rules[$productCode] ?? null;
 
             if ($rule) {
                 $total += $this->applyRule($rule, $quantity, $price);
@@ -75,25 +74,23 @@ class Checkout
     }
 
     /**
-     * Applies the pricing rule to a product by dispatching to the appropriate Enum case.
+     * Applies a pricing rule to a set of items.
      *
-     * @param array $rule An associative array containing 'rule_name' and 'rule_details'.
-     * @param int $quantity The quantity of the product in the cart.
-     * @param float $price The base price of the product.
-     * @throws \Exception If the rule_name does not match any known Enum case.
-     * @return float The calculated price after applying the rule.
+     * @param array<string,mixed> $rule
+     * @param int $quantity
+     * @param float $price
+     * @throws \Exception
+     * @return float
      */
     private function applyRule(array $rule, int $quantity, float $price): float
     {
-        $ruleName = $rule['rule_name'];
+        $ruleName    = $rule['rule_name'];
         $ruleDetails = $rule['rule_details'] ?? [];
 
         try {
-            // Convert string to Enum
             $ruleType = PricingRuleType::from($ruleName);
-        } catch (\ValueError $e) {
-            // If the string doesn't match any Enum case, throw an exception
-            throw new \Exception("Unknown rule: {$ruleName}");
+        } catch (\ValueError) {
+            throw new \Exception("Unknown rule: $ruleName");
         }
 
         // Delegate logic to the Enum's apply() method
@@ -101,10 +98,9 @@ class Checkout
     }
 
     /**
-     * Loads the product data into the Checkout system.
+     * Sets the available products data from an external source.
      *
-     * @param array $products An array of products with their details.
-     * @return void
+     * @param array<string,array<string,mixed>> $products
      */
     public function loadProducts(array $products): void
     {
@@ -112,60 +108,30 @@ class Checkout
     }
 
     /**
-     * Loads pricing rules from the database, considering their activation status, dates, and days of the week.
+     * Sets the current active rules from an external source.
      *
-     * @param \PDO $db A PDO instance for database connection.
-     * @return void
+     * @param array<string,array<string,mixed>> $rules
      */
-    public function loadRulesFromDatabase(\PDO $db): void
+    public function loadRules(array $rules): void
     {
-        $query = $db->query("SELECT * FROM pricing_rules WHERE active = 1");
-        $rules = [];
-
-        while ($row = $query->fetch(\PDO::FETCH_ASSOC)) {
-            if (!$this->isRuleActive($row)) {
-                continue;
-            }
-
-            $rules[$row['product_code']] = [
-                'rule_name'    => $row['rule_name'],
-                'rule_details' => json_decode($row['rule_details'], true),
-            ];
-        }
-
         $this->rules = $rules;
     }
 
     /**
-     * Checks if a pricing rule is active based on its start/end dates and days of the week.
-     *
-     * @param array $rule The rule data from the database.
-     * @return bool True if the rule is active, false otherwise.
+     * Empties the cart.
      */
-    private function isRuleActive(array $rule): bool
+    public function clearCart(): void
     {
-        $currentDate = Carbon::now();
-        $currentDay  = $currentDate->format('l');
+        $this->cart = [];
+    }
 
-        if (isset($rule['active']) && !$rule['active']) {
-            return false;
-        }
-
-        if (!empty($rule['start_date']) && $currentDate < new \DateTime($rule['start_date'])) {
-            return false;
-        }
-
-        if (!empty($rule['end_date']) && $currentDate > new \DateTime($rule['end_date'])) {
-            return false;
-        }
-
-        if (!empty($rule['days'])) {
-            $days = json_decode($rule['days'], true);
-            if (!in_array($currentDay, $days)) {
-                return false;
-            }
-        }
-
-        return true;
+    /**
+     * Returns the contents of the cart.
+     *
+     * @return string[]
+     */
+    public function getCart(): array
+    {
+        return $this->cart;
     }
 }

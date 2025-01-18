@@ -10,8 +10,6 @@ enum PricingRuleType: string
     case BUY_ONE_GET_ONE = 'buy_one_get_one';
     case BULK_DISCOUNT   = 'bulk_discount';
 
-    // case BUY_X_GET_Y     = 'buy_x_get_y';
-    // case PERCENTAGE_DISCOUNT = 'percentage_discount';
 
     /**
      * Applies the logic for the given pricing rule type.
