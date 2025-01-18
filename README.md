@@ -9,7 +9,7 @@ This application manages products, pricing rules, and calculates the total price
 
 ### **1. Clone the Repository**
 ```
-git clone https://github.com/your-repo/supermarket-checkout.git
+git clone https://github.com/HaidaDaniel/supermarket-checkout.git
 cd supermarket-checkout
 ```
 
